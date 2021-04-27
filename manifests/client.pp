@@ -51,7 +51,7 @@ class sensu::client (
             dsc_ensure   => present,
             dsc_policy   => 'Log_on_as_a_service',
             dsc_identity => $::sensu::windows_service_user['user'],
-            before       => Dsc_service['sensu-client'],
+            before       => Exec['install-sensu-client-service'],
           }
 
           acl { 'C:/opt/sensu':
@@ -62,21 +62,29 @@ class sensu::client (
                 'rights'   => ['full'],
               },
             ],
-            before      => Dsc_service['sensu-client'],
+            before      => Exec['install-sensu-client-service'],
           }
+
+          $service_user = $::sensu::windows_service_user['user']
+          $service_password = $::sensu::windows_service_user['password']
+          $sc_user_args = " obj= \"${service_user}\" password= \"${service_password}\""
+        } else {
+          $sc_user_args = ""
         }
 
-        # This resource installs the service but service state and refreshes
-        # are handled by Service[sensu-client]
-        # See https://tickets.puppetlabs.com/browse/MODULES-4570
-        dsc_service { 'sensu-client':
-          dsc_ensure      => $dsc_ensure,
-          dsc_name        => 'sensu-client',
-          dsc_credential  => $::sensu::windows_service_user,
-          dsc_displayname => 'Sensu Client',
-          dsc_path        => 'c:\\opt\\sensu\\bin\\sensu-client.exe',
-          require         => File['C:/opt/sensu/bin/sensu-client.xml'],
-          notify          => Service['sensu-client'],
+        $sensu_client_exe = "C:\\opt\\sensu\\bin\\sensu-client.exe"
+        if $sensuclassic::client {
+          exec { 'install-sensu-client-service':
+            command => "C:\\windows\\system32\\sc.exe create sensu-client start= delayed-auto binPath= ${sensu_client_exe} DisplayName= \"Sensu Client\"${sc_user_args}", # lint:ignore:140chars
+            unless  => "C:\\windows\\system32\\sc.exe query sensu-client",
+            require => [
+              File['C:/opt/sensu/bin/sensu-client.xml'],
+              Class['::sensu::package'],
+              Sensu_client_config[$::fqdn],
+              Class['::sensu::rabbitmq::config'],
+            ],
+            notify  => Service['sensu-client'],
+          }
         }
       }
       'Darwin': {
